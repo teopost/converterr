@@ -1,0 +1,17 @@
+services:
+  converterr:
+    image: ghcr.io/teopost/converterr:latest
+    # build: .                     # or build it yourself
+    container_name: converterr
+    user: "1000:1000"               # owner of your media files
+    environment:
+      - TZ=Europe/Rome
+    volumes:
+      - ./config:/config            # database
+      - ./cache:/cache              # ffmpeg scratch space (needs room for one output file per worker)
+      - /mnt/media/tv:/library/tv
+      - /mnt/media/movies:/library/movies
+    ports:
+      - 8787:8787
+    cpus: "3.0"                     # leave a core for your media server
+    restart: unless-stopped

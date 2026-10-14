@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Converterr — automatic media library transcoder for the *arr stack</title>
+  <meta name="description" content="Converterr finds the videos your TV can't play and converts them in place with ffmpeg. Sonarr/Radarr-style web UI, webhooks, Telegram notifications. Single Rust binary, 100% open source.">
+  <link rel="icon" href="logo.svg">
+  <style>
+    :root { --accent:#a46bff; --accent-dark:#7d48d9; --bg:#1b1b1b; --panel:#262626; --border:#353535; --text:#cfcfcf; --dim:#8f8f8f; --white:#fff; }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin:0; background:var(--bg); color:var(--text); font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif; }
+    a { color:var(--accent); }
+    code, pre { font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size: 14px; }
+    code { background:#2f2f2f; padding:1px 5px; border-radius:3px; }
+    pre { background:#121212; border:1px solid var(--border); border-radius:6px; padding:14px 16px; overflow-x:auto; line-height:1.5; }
+    pre code { background:none; padding:0; }
+    nav { position:sticky; top:0; z-index:10; display:flex; align-items:center; gap:22px; padding:0 28px; height:60px; background:#232323; border-bottom:1px solid #111; }
+    nav .brand { display:flex; align-items:center; gap:10px; color:var(--white); font-size:20px; font-weight:300; text-decoration:none; margin-right:auto; }
+    nav .brand img { width:30px; height:30px; }
+    nav a.l { color:#ddd; text-decoration:none; font-size:14px; }
+    nav a.l:hover { color:var(--accent); }
+    .wrap { max-width:1100px; margin:0 auto; padding:0 24px; }
+    header.hero { padding:80px 0 50px; text-align:center; background:radial-gradient(ellipse at top, #2c2340 0%, var(--bg) 65%); }
+    .hero img.logo { width:96px; height:96px; }
+    .hero h1 { margin:14px 0 6px; color:var(--white); font-size:46px; font-weight:300; letter-spacing:-.5px; }
+    .hero p.tag { max-width:720px; margin:0 auto 28px; font-size:20px; color:#bbb; }
+    .btn { display:inline-block; padding:10px 22px; margin:4px; border-radius:5px; background:#393f45; color:var(--white); text-decoration:none; font-weight:600; border:1px solid #555; }
+    .btn.primary { background:var(--accent); border-color:var(--accent-dark); }
+    .btn:hover { filter:brightness(1.1); }
+    .hero .shot { margin-top:44px; }
+    .shot img { width:100%; border-radius:8px; border:1px solid #333; box-shadow:0 10px 40px rgba(0,0,0,.6); display:block; }
+    .badges { margin-top:14px; color:var(--dim); font-size:14px; }
+    section { padding:56px 0; border-top:1px solid #262626; }
+    h2 { color:var(--white); font-size:30px; font-weight:400; margin:0 0 8px; }
+    h3 { color:var(--white); font-size:19px; font-weight:500; margin:28px 0 8px; }
+    .lead { color:#aaa; margin:0 0 28px; font-size:17px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:18px; }
+    .card { background:var(--panel); border-radius:6px; padding:18px 20px; border-top:3px solid var(--accent); }
+    .card h4 { margin:0 0 6px; color:var(--white); font-size:17px; font-weight:500; }
+    .card p { margin:0; font-size:15px; color:#bdbdbd; }
+    .gallery { display:grid; grid-template-columns:repeat(auto-fill,minmax(480px,1fr)); gap:22px; }
+    .gallery figure { margin:0; }
+    .gallery figcaption { margin-top:8px; color:var(--dim); font-size:14px; text-align:center; }
+    table { width:100%; border-collapse:collapse; font-size:15px; }
+    th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--border); vertical-align:top; }
+    th { color:var(--dim); font-weight:500; }
+    .flow { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:18px 0; }
+    .flow span { background:var(--panel); padding:8px 14px; border-radius:5px; border:1px solid var(--border); font-size:14px; }
+    .flow b { color:var(--accent); }
+    .note { background:#2b2440; border-left:4px solid var(--accent); padding:12px 16px; border-radius:4px; margin:16px 0; }
+    footer { padding:40px 0; text-align:center; color:var(--dim); font-size:14px; border-top:1px solid #262626; }
+    @media (max-width:700px) { nav a.l { display:none; } .hero h1 { font-size:34px; } .gallery { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+<nav>
+  <a class="brand" href="#"><img src="logo.svg" alt="">Converterr</a>
+  <a class="l" href="#features">Features</a>
+  <a class="l" href="#screenshots">Screenshots</a>
+  <a class="l" href="#install">Install</a>
+  <a class="l" href="#arr">Sonarr &amp; Radarr</a>
+  <a class="l" href="#docs">Docs</a>
+  <a class="l" href="#api">API</a>
+  <a class="l" href="https://github.com/teopost/converterr">GitHub</a>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <img class="logo" src="logo.svg" alt="Converterr logo">
+    <h1>Converterr</h1>
+    <p class="tag">Finds the videos your TV can't play and converts them in place.<br>A Sonarr/Radarr-style transcoder for your media library: one small Rust binary, 100% open source.</p>
+    <a class="btn primary" href="#install">Get started</a>
+    <a class="btn" href="https://github.com/teopost/converterr">View on GitHub</a>
+    <div class="badges">GPL-3.0 · linux/amd64 · linux/arm64 (Raspberry Pi) · no accounts, no paid tiers</div>
+    <div class="shot"><img src="screenshots/queue.png" alt="Converterr activity queue"></div>
+  </div>
+</header>
+
+<section id="features">
+  <div class="wrap">
+    <h2>Why Converterr</h2>
+    <p class="lead">Your TV plays HEVC and H.264 fine, but stutters on AV1, VC-1, MPEG-2 or old DivX, and a small server can't transcode those on the fly. Converterr fixes those files once and leaves everything else alone.</p>
+    <div class="grid">
+      <div class="card"><h4>Rules, not guesswork</h4><p>A profile lists the source codecs to convert (e.g. <code>av1,vc1,mpeg2video</code>) and optionally a maximum resolution. Files already in a good format are never touched.</p></div>
+      <div class="card"><h4>Safe in-place replace</h4><p>ffmpeg writes to a cache folder. The original is replaced only after the output is checked with ffprobe and matches the source duration. Optionally the original is kept if the result isn't smaller.</p></div>
+      <div class="card"><h4>Sonarr &amp; Radarr native</h4><p>A webhook converts new imports right away. When a conversion finishes, Converterr asks Sonarr/Radarr to rescan the series or movie. Path mapping works per library.</p></div>
+      <div class="card"><h4>Night-time window</h4><p>Encode only during off-peak hours. Outside the window, running encodes are <em>suspended</em>, not killed, so a long movie can be finished over several nights.</p></div>
+      <div class="card"><h4>Convert now</h4><p>Need a file today? Select one or more files and hit <b>Convert now</b>. They start right away on a dedicated worker, ignoring the window and the queue.</p></div>
+      <div class="card"><h4>Telegram notifications</h4><p>Same look as Sonarr/Radarr's Telegram messages: files queued (one summary per scan), conversions done (with the space saved), failures.</p></div>
+      <div class="card"><h4>Fast on a Raspberry Pi</h4><p>The Docker image ships Debian's ffmpeg, whose x265 has NEON assembly on arm64: about 3.5× faster than "noasm" builds (0.21× vs 0.06× realtime for 1080p AV1 → 720p HEVC on a Pi 4).</p></div>
+      <div class="card"><h4>HDR aware</h4><p>When an HDR source is encoded to 8-bit, Converterr tone-maps it to SDR automatically, so colours don't come out washed out.</p></div>
+      <div class="card"><h4>Tiny and dependency-free</h4><p>A single Rust binary with an embedded web UI and a SQLite database. Scans are incremental (probe results are cached by size and mtime). REST API with <code>X-Api-Key</code>, like the *arr apps.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="screenshots">
+  <div class="wrap">
+    <h2>Screenshots</h2>
+    <p class="lead">The UI follows the *arr family: sidebar, icon toolbar, dark theme.</p>
+    <div class="gallery">
+      <figure class="shot"><img src="screenshots/libraries.png" alt="Libraries"><figcaption>Libraries: file count, size, codec mix and what's left to convert</figcaption></figure>
+      <figure class="shot"><img src="screenshots/library.png" alt="Library files"><figcaption>Library view: every probed file, select some and queue them or convert them now</figcaption></figure>
+      <figure class="shot"><img src="screenshots/queue.png" alt="Queue"><figcaption>Queue: live progress, speed and ETA</figcaption></figure>
+      <figure class="shot"><img src="screenshots/history.png" alt="History"><figcaption>History: before/after codec and size, space saved, ffmpeg log of each task</figcaption></figure>
+      <figure class="shot"><img src="screenshots/profiles.png" alt="Profiles"><figcaption>Profiles: which files to convert and how</figcaption></figure>
+      <figure class="shot"><img src="screenshots/connect.png" alt="Connect"><figcaption>Connect: Sonarr, Radarr, webhook URL and Telegram</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <h2>Install</h2>
+    <p class="lead">Docker is the easiest way. The image is multi-arch (amd64 and arm64).</p>
+<pre><code>services:
+  converterr:
+    image: ghcr.io/teopost/converterr:latest
+    container_name: converterr
+    user: "1000:1000"               # owner of your media files
+    environment:
+      - TZ=Europe/Rome              # the time window uses this timezone
+    volumes:
+      - ./config:/config            # database
+      - ./cache:/cache              # ffmpeg scratch space (room for one output per worker)
+      - /mnt/media/tv:/library/tv
+      - /mnt/media/movies:/library/movies
+    ports:
+      - 8787:8787
+    cpus: "3.0"                     # leave a core for your media server
+    restart: unless-stopped</code></pre>
+    <p>Open <code>http://&lt;host&gt;:8787</code>, then:</p>
+    <ol>
+      <li><b>Settings → Profiles</b>: check the default profile. It converts AV1/VC-1/WMV/MPEG-2/DivX3 to HEVC 720p 8-bit, CRF 26.</li>
+      <li><b>Libraries → Add Library</b>: pick a folder and a profile, and choose whether to notify Sonarr or Radarr.</li>
+      <li>Click <b>Scan</b>. Files that need converting show up in <b>Activity → Queue</b>.</li>
+    </ol>
+    <h3>Build from source</h3>
+<pre><code>git clone https://github.com/teopost/converterr
+cd converterr
+docker build -t converterr .          # or: cargo build --release (needs ffmpeg/ffprobe in PATH)</code></pre>
+  </div>
+</section>
+
+<section id="arr">
+  <div class="wrap">
+    <h2>Sonarr &amp; Radarr integration</h2>
+    <p class="lead">Two links, one in each direction.</p>
+    <div class="flow">
+      <span>Sonarr/Radarr imports a file</span><b>→</b>
+      <span>webhook to Converterr</span><b>→</b>
+      <span>ffprobe + profile rules</span><b>→</b>
+      <span>queue → convert (in the time window)</span><b>→</b>
+      <span>RescanSeries / RescanMovie</span>
+    </div>
+    <h3>1. Webhook: convert right after import</h3>
+    <p>In Sonarr or Radarr go to <b>Settings → Connect → + → Webhook</b>, enable <b>On Import</b> and <b>On Upgrade</b>, method POST, and use the URL shown on Converterr's <b>Settings → Connect</b> page:</p>
+<pre><code>http://converterr:8787/api/v1/webhook?apikey=&lt;your api key&gt;</code></pre>
+    <p>Converterr probes the imported file and queues it only if the library's profile says so. A daily scan (optional) catches anything the webhook missed.</p>
+    <h3>2. Rescan after conversion</h3>
+    <p>Fill in the Sonarr/Radarr URL and API key on <b>Settings → Connect</b> and set <b>Notify</b> on each library. After a conversion, Converterr finds the series or movie that owns the file and triggers a rescan, so the *arr app picks up the new codec, size and extension.</p>
+    <h3>Path mapping</h3>
+    <p>Containers often mount the same folder at different paths. Set the library's <b>Sonarr/Radarr path</b> to the folder as Sonarr/Radarr sees it:</p>
+    <table>
+      <tr><th>Converterr library path</th><th>Sonarr/Radarr path</th><th>Example file</th></tr>
+      <tr><td><code>/library/tv</code></td><td><code>/tv</code></td><td><code>/tv/Show/Season 1/Show - S01E01.mkv</code></td></tr>
+      <tr><td><code>/library/movies</code></td><td><code>/movies</code></td><td><code>/movies/Film (2020)/Film (2020).mkv</code></td></tr>
+    </table>
+    <div class="note">Use one library per Radarr root folder so that every movie path can be mapped.</div>
+  </div>
+</section>
+
+<section id="docs">
+  <div class="wrap">
+    <h2>Documentation</h2>
+
+    <h3>Profiles</h3>
+    <table>
+      <tr><th>Setting</th><th>Meaning</th></tr>
+      <tr><td>Convert these codecs</td><td>Comma separated ffprobe codec names. Common ones: <code>av1</code>, <code>vc1</code>, <code>wmv3</code>, <code>wmv2</code>, <code>mpeg2video</code>, <code>msmpeg4v3</code> (DivX 3), <code>mpeg4</code> (Xvid/DivX). Empty = convert every file whose codec differs from the target.</td></tr>
+      <tr><td>Convert oversized files</td><td>Also convert files larger than the max width × height, whatever their codec.</td></tr>
+      <tr><td>Max width / height</td><td>Downscale to fit, keeping the aspect ratio. Smaller files are never upscaled. 0 = no limit.</td></tr>
+      <tr><td>Encoder, preset, CRF</td><td><code>libx265</code>, <code>libx264</code> or <code>libsvtav1</code>. Lower CRF = better quality and bigger files.</td></tr>
+      <tr><td>Pixel format</td><td>8-bit (<code>yuv420p</code>) for maximum compatibility, 10-bit, or keep the source. 8-bit output from HDR sources is tone-mapped.</td></tr>
+      <tr><td>Container / audio</td><td>MKV keeps every audio, subtitle and attachment stream; MP4 drops subtitles. Audio can be copied or re-encoded to AAC/AC3.</td></tr>
+      <tr><td>Keep original if not smaller</td><td>Discard the output when it isn't smaller than the source.</td></tr>
+      <tr><td>Extra ffmpeg arguments</td><td>Appended before the output file, e.g. <code>-threads 3</code>.</td></tr>
+    </table>
+
+    <h3>Workers, time window and "Convert now"</h3>
+    <ul>
+      <li><b>Workers</b>: how many conversions run at the same time (1 on a Raspberry Pi).</li>
+      <li><b>Time window</b>: workers start tasks only inside the window (windows across midnight like 22:00 → 06:00 work). When the window closes, running ffmpeg processes are suspended with SIGSTOP and resumed with SIGCONT the next time it opens.</li>
+      <li><b>Convert now</b>: on the library page select one or more files and click <b>Convert now</b> (or the ⚡ icon on a row). In the queue, select queued tasks and click <b>Convert now</b>. Forced tasks run on a dedicated extra worker, so they start even while a regular worker holds a suspended encode, and they ignore the time window.</li>
+      <li><b>Pause</b> (Activity → Queue) suspends everything, forced tasks included, until you resume.</li>
+    </ul>
+
+    <h3>Telegram notifications</h3>
+    <p>On <b>Settings → Connect</b> enter a bot token (from <a href="https://t.me/BotFather">@BotFather</a>) and your chat id. You can reuse the bot you already use for Sonarr/Radarr. Each event can be switched on or off:</p>
+    <table>
+      <tr><th>Event</th><th>Message</th></tr>
+      <tr><td>File(s) queued</td><td>File name, codec, resolution, size and reason. A scan sends <em>one</em> summary message instead of one message per file.</td></tr>
+      <tr><td>Conversion done</td><td>Codec and resolution before → after, size before → after and the percentage saved.</td></tr>
+      <tr><td>Conversion failed</td><td>File name and the error.</td></tr>
+    </table>
+
+    <h3>Settings and environment</h3>
+    <table>
+      <tr><th>Variable</th><th>Default</th><th>Meaning</th></tr>
+      <tr><td><code>CONVERTERR_DATA</code></td><td><code>/config</code></td><td>Folder holding <code>converterr.db</code></td></tr>
+      <tr><td><code>CONVERTERR_PORT</code></td><td><code>8787</code></td><td>HTTP port</td></tr>
+      <tr><td><code>CONVERTERR_BIND</code></td><td><code>0.0.0.0</code></td><td>Bind address</td></tr>
+      <tr><td><code>TZ</code></td><td>UTC</td><td>Timezone used by the time window</td></tr>
+      <tr><td><code>RUST_LOG</code></td><td><code>info</code></td><td>Log level</td></tr>
+    </table>
+    <p>Everything else is set in the web UI: workers, time window, scan interval, cache folder, API key, optional UI password (HTTP Basic), Sonarr/Radarr and Telegram.</p>
+
+    <h3>How a conversion works</h3>
+    <ol>
+      <li>The file is probed. Its first real video stream is encoded; every audio, subtitle and attachment stream is copied as-is.</li>
+      <li>The output is written to <code>/cache/task-&lt;id&gt;/</code> and checked with ffprobe: it must be readable and match the source duration.</li>
+      <li>It is copied next to the original as a hidden temp file and atomically renamed over it. If the extension changes (e.g. <code>.avi</code> → <code>.mkv</code>) the original is deleted. An existing file with the target name is never overwritten.</li>
+      <li>Sonarr/Radarr is told to rescan, and a Telegram message is sent.</li>
+    </ol>
+
+    <h3>FAQ</h3>
+    <p><b>Is it related to Unmanic?</b> It was inspired by it, but Converterr is a separate project written from scratch in Rust. Every feature is free and there are no accounts.</p>
+    <p><b>Hardware encoding?</b> Not built in yet. You can pass encoder options through <i>Extra ffmpeg arguments</i>, but software x265 is the safe default. Some ARM v4l2 encoders are unstable.</p>
+    <p><b>Will it re-convert a file it already converted?</b> No. After a conversion the file is HEVC, so the profile rules no longer match it. Failed, skipped and cancelled files are not re-queued automatically. Use <b>Retry</b> in History.</p>
+  </div>
+</section>
+
+<section id="api">
+  <div class="wrap">
+    <h2>REST API</h2>
+    <p class="lead">All endpoints live under <code>/api/v1</code> and require the API key, sent as the <code>X-Api-Key</code> header or as <code>?apikey=</code>.</p>
+    <table>
+      <tr><th>Method</th><th>Path</th><th>Description</th></tr>
+      <tr><td>GET</td><td><code>/system/status</code></td><td>Version, ffmpeg version, statistics</td></tr>
+      <tr><td>GET / PUT</td><td><code>/settings</code></td><td>Read or replace the settings</td></tr>
+      <tr><td>GET POST / PUT DELETE</td><td><code>/profile</code>, <code>/profile/{id}</code></td><td>Profiles</td></tr>
+      <tr><td>GET POST / PUT DELETE</td><td><code>/library</code>, <code>/library/{id}</code></td><td>Libraries (with statistics)</td></tr>
+      <tr><td>POST</td><td><code>/library/scan</code>, <code>/library/{id}/scan</code></td><td>Start a scan</td></tr>
+      <tr><td>GET</td><td><code>/library/{id}/files?toConvert=true&amp;search=&amp;page=</code></td><td>Probed files</td></tr>
+      <tr><td>GET</td><td><code>/queue</code></td><td>Queued and running tasks</td></tr>
+      <tr><td>POST</td><td><code>/queue</code></td><td><code>{"paths": ["..."], "force": true}</code>: queue files or folders, optionally converting now</td></tr>
+      <tr><td>POST</td><td><code>/queue/force</code></td><td><code>{"ids": [1, 2]}</code>: convert queued tasks now</td></tr>
+      <tr><td>POST / DELETE</td><td><code>/queue/{id}/top</code>, <code>/queue/{id}</code></td><td>Move to top, cancel/remove</td></tr>
+      <tr><td>GET / DELETE</td><td><code>/history?status=&amp;page=</code></td><td>History, clear history</td></tr>
+      <tr><td>POST</td><td><code>/history/{id}/retry</code></td><td>Queue a finished task again</td></tr>
+      <tr><td>GET</td><td><code>/task/{id}/log</code></td><td>ffmpeg command line and output</td></tr>
+      <tr><td>GET / POST</td><td><code>/workers</code>, <code>/workers/pause</code>, <code>/workers/resume</code></td><td>Worker state, pause switch</td></tr>
+      <tr><td>POST</td><td><code>/webhook</code></td><td>Sonarr/Radarr webhook receiver</td></tr>
+      <tr><td>POST</td><td><code>/test/arr</code>, <code>/test/telegram</code></td><td>Connection tests</td></tr>
+    </table>
+  </div>
+</section>
+
+<footer>
+  Converterr is free software released under the GPL-3.0-or-later license ·
+  <a href="https://github.com/teopost/converterr">github.com/teopost/converterr</a>
+</footer>
+</body>
+</html>

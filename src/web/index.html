@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Converterr</title>
+  <link rel="icon" href="/logo.svg">
+  <link rel="stylesheet" href="/app.css">
+  <script>window.Converterr = /*BOOT*/{};</script>
+</head>
+<body>
+  <header class="page-header">
+    <button class="sidebar-toggle" id="sidebarToggle" aria-label="Menu">☰</button>
+    <a class="logo" href="#/"><img src="/logo.svg" alt=""><span>Converterr</span></a>
+    <div class="header-search">
+      <input id="globalSearch" type="search" placeholder="Search files" autocomplete="off">
+    </div>
+    <div class="header-status" id="headerStatus"></div>
+  </header>
+  <div class="page-body">
+    <nav class="sidebar" id="sidebar">
+      <a class="nav-item" data-route="libraries" href="#/"><i data-icon="library"></i>Libraries</a>
+      <a class="nav-item" data-route="activity" href="#/activity/queue"><i data-icon="activity"></i>Activity<span class="badge" id="queueBadge"></span></a>
+      <div class="nav-sub" data-parent="activity">
+        <a data-route="queue" href="#/activity/queue">Queue</a>
+        <a data-route="history" href="#/activity/history">History</a>
+      </div>
+      <a class="nav-item" data-route="settings" href="#/settings/profiles"><i data-icon="settings"></i>Settings</a>
+      <div class="nav-sub" data-parent="settings">
+        <a data-route="profiles" href="#/settings/profiles">Profiles</a>
+        <a data-route="general" href="#/settings/general">General</a>
+        <a data-route="connect" href="#/settings/connect">Connect</a>
+      </div>
+      <a class="nav-item" data-route="system" href="#/system/status"><i data-icon="system"></i>System</a>
+      <div class="nav-sub" data-parent="system">
+        <a data-route="status" href="#/system/status">Status</a>
+        <a data-route="logs" href="#/system/logs">Logs</a>
+      </div>
+    </nav>
+    <main class="page-content">
+      <div class="toolbar" id="toolbar"></div>
+      <div class="content" id="content"></div>
+    </main>
+  </div>
+  <div class="modal-backdrop" id="modal" hidden></div>
+  <div class="toasts" id="toasts"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
