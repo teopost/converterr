@@ -100,6 +100,47 @@ pub fn cancel_task(state: &AppState, task_id: i64) -> bool {
     false
 }
 
+/// Removes what a stop at the wrong moment leaves behind. Must run before the
+/// workers start: every `task-N` cache dir belongs to an interrupted task (it
+/// restarts from scratch). Half-copied `.converterr-tmp` files in the libraries
+/// are removed in the background, only if older than this start.
+pub async fn cleanup_leftovers(state: &AppState) {
+    let Ok(settings) = state.db.settings() else { return };
+    let mut removed = 0;
+    if let Ok(mut dir) = tokio::fs::read_dir(&settings.cache_dir).await {
+        while let Ok(Some(e)) = dir.next_entry().await {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let is_task = name.strip_prefix("task-").is_some_and(|n| n.parse::<i64>().is_ok());
+            if is_task && tokio::fs::remove_dir_all(e.path()).await.is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    if removed > 0 {
+        state.log("info", &format!("Removed {removed} leftover cache dir(s)"));
+    }
+
+    let started = std::time::SystemTime::now();
+    let roots: Vec<PathBuf> = state.db.libraries().unwrap_or_default().into_iter().map(|l| PathBuf::from(l.path)).collect();
+    let st = state.clone();
+    tokio::task::spawn_blocking(move || {
+        for root in roots {
+            let temps = walkdir::WalkDir::new(&root)
+                .follow_links(true)
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().is_file() && e.file_name().to_string_lossy().ends_with(".converterr-tmp"))
+                .filter(|e| e.metadata().ok().and_then(|m| m.modified().ok()).is_some_and(|t| t < started));
+            for e in temps {
+                match std::fs::remove_file(e.path()) {
+                    Ok(()) => st.log("warn", &format!("Removed leftover {}", e.path().display())),
+                    Err(err) => st.log("warn", &format!("Cannot remove leftover {}: {err}", e.path().display())),
+                }
+            }
+        }
+    });
+}
+
 pub fn start(state: AppState) {
     for idx in 0..=MAX_WORKERS {
         let st = state.clone();
@@ -233,7 +274,14 @@ async fn process(
     let ext = ffmpeg::output_extension(&profile, input);
     let final_path = input.with_extension(&ext);
     if final_path != input && tokio::fs::try_exists(&final_path).await.unwrap_or(false) {
-        bail!("{} already exists, refusing to overwrite it", final_path.display());
+        // A previous run may have stopped between installing the output and
+        // deleting the original: if the existing file is that output, finish the job.
+        return match probe::probe(&final_path).await {
+            Ok(out) if out.codec == profile.target_codec() && durations_match(info.duration, out.duration) => {
+                finish_interrupted(state, &settings, &library, input, &final_path, &out).await
+            }
+            _ => bail!("{} already exists, refusing to overwrite it", final_path.display()),
+        };
     }
     let stem = input.file_stem().context("bad file name")?.to_string_lossy().into_owned();
     let work_dir = PathBuf::from(&settings.cache_dir).join(format!("task-{task_id}"));
@@ -278,15 +326,12 @@ async fn process(
             return fail(log_out, format!("output not readable: {e:#}"), log);
         }
     };
-    if info.duration > 0.0 {
-        let tolerance = (info.duration * 0.01).max(2.0);
-        if (out_info.duration - info.duration).abs() > tolerance {
-            cleanup().await;
-            return fail(log_out, 
-                format!("duration mismatch: source {:.1}s, output {:.1}s", info.duration, out_info.duration),
-                log,
-            );
-        }
+    if !durations_match(info.duration, out_info.duration) {
+        cleanup().await;
+        return fail(log_out, 
+            format!("duration mismatch: source {:.1}s, output {:.1}s", info.duration, out_info.duration),
+            log,
+        );
     }
     let size_after = tokio::fs::metadata(&tmp_out).await?.len() as i64;
 
@@ -366,6 +411,39 @@ async fn process(
     })
 }
 
+/// Same length within 1% (at least 2s); unknown source duration always matches.
+fn durations_match(source: f64, output: f64) -> bool {
+    source <= 0.0 || (output - source).abs() <= (source * 0.01).max(2.0)
+}
+
+/// Completes a conversion whose output was already installed when the
+/// container stopped: removes the original and tells Sonarr/Radarr.
+async fn finish_interrupted(
+    state: &AppState,
+    settings: &Settings,
+    library: &crate::db::Library,
+    input: &Path,
+    final_path: &Path,
+    out: &probe::MediaInfo,
+) -> Result<Done> {
+    tokio::fs::remove_file(input).await.with_context(|| format!("removing {}", input.display()))?;
+    let _ = state.db.delete_file(&input.to_string_lossy());
+    let size_after = tokio::fs::metadata(final_path).await.map(|m| m.len() as i64).ok();
+    mark_file(state, library.id, final_path, out, size_after.unwrap_or(0), "").await;
+    if let Err(e) = arr::notify_library(settings, library, final_path).await {
+        state.log("warn", &format!("{} notify failed: {e:#}", library.notify));
+    }
+    state.log("warn", &format!("{} was already converted by an interrupted run: original removed", final_path.display()));
+    Ok(Done {
+        status: "completed".into(),
+        message: "interrupted conversion completed, original removed".into(),
+        size_after,
+        codec_after: out.codec.clone(),
+        output: final_path.to_string_lossy().into_owned(),
+        log: String::new(),
+    })
+}
+
 async fn mark_file(state: &AppState, library_id: i64, path: &Path, info: &probe::MediaInfo, size: i64, reason: &str) {
     let mtime = tokio::fs::metadata(path)
         .await
@@ -429,5 +507,14 @@ mod tests {
         assert!(in_window(t(23, 30), "22:00", "06:00"));
         assert!(in_window(t(5, 0), "22:00", "06:00"));
         assert!(!in_window(t(12, 0), "22:00", "06:00"));
+    }
+
+    #[test]
+    fn duration_tolerance() {
+        assert!(durations_match(2837.0, 2840.0));
+        assert!(!durations_match(2837.0, 2700.0));
+        assert!(durations_match(60.0, 61.9));
+        assert!(!durations_match(60.0, 62.5));
+        assert!(durations_match(0.0, 123.0));
     }
 }

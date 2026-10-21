@@ -42,6 +42,7 @@ async fn main() -> Result<()> {
         state.log("warn", &format!("cache dir {cache}: {e}"));
     }
 
+    worker::cleanup_leftovers(&state).await;
     worker::start(state.clone());
     scanner::start(state.clone());
 
@@ -51,7 +52,7 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(&addr).await.with_context(|| format!("binding {addr}"))?;
     state.log("info", &format!("Web UI listening on http://{addr}"));
 
-    axum::serve(listener, api::router(state))
+    axum::serve(listener, api::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>())
         .with_graceful_shutdown(async {
             let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
             tokio::select! {

@@ -109,6 +109,15 @@ pub struct RunOutcome {
     pub log: String,
 }
 
+/// Seconds of source encoded so far. ffmpeg's out_time is the position of the
+/// slowest output stream: a sparse one (e.g. a forced-subtitle track) keeps it
+/// stuck at its last packet, or at N/A, while the video goes on, so the video
+/// frame count / fps wins when it is further ahead.
+fn position(out_time: f64, frame: f64, fps: f64) -> f64 {
+    let by_frames = if fps > 0.0 { frame / fps } else { 0.0 };
+    out_time.max(by_frames)
+}
+
 /// Runs ffmpeg, publishing the child pid in `pid` (so it can be paused or
 /// killed from outside) and reporting progress through `on_progress`.
 pub async fn run(
@@ -141,9 +150,8 @@ pub async fn run(
         tail.into_iter().collect::<Vec<_>>().join("\n")
     });
 
-    // out_time stays "N/A" while a sparse stream (e.g. a forced-subtitle track)
-    // has not produced a packet yet, so fall back to frame count / fps and
-    // compute the speed ourselves from encoding time (gaps > 10s = suspended).
+    // Position comes from out_time and the video frame count (see `position`);
+    // the speed is computed from encoding time (gaps > 10s = suspended).
     let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
     let mut p = Progress::default();
     let (mut out_time, mut frame) = (0.0f64, 0.0f64);
@@ -162,7 +170,7 @@ pub async fn run(
                 if gap < 10.0 {
                     active += gap;
                 }
-                let done = if out_time > 0.0 { out_time } else if fps > 0.0 { frame / fps } else { 0.0 };
+                let done = position(out_time, frame, fps);
                 let speed = if active > 0.0 { done / active } else { 0.0 };
                 p.speed = if speed > 0.0 { format!("{speed:.3}x") } else { String::new() };
                 if duration > 0.0 {
@@ -206,5 +214,25 @@ pub async fn install_output(src: &Path, final_path: &Path) -> Result<()> {
         let _ = tokio::fs::remove_file(&tmp).await;
         bail!("rename into place failed: {e}");
     }
+    // Make the rename itself durable, or a power cut could undo it.
+    if let Ok(d) = tokio::fs::File::open(dir).await {
+        let _ = d.sync_all().await;
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn position_ignores_lagging_subtitles() {
+        // BB S03E03: out_time stuck at the last forced subtitle (217 s), video at 1000 s.
+        assert_eq!(position(217.0, 24_000.0, 24.0), 1000.0);
+        // out_time N/A (0) before the first packet of a sparse stream.
+        assert_eq!(position(0.0, 2_400.0, 24.0), 100.0);
+        // Normal case and unknown fps: out_time is used.
+        assert_eq!(position(500.0, 11_990.0, 24.0), 500.0);
+        assert_eq!(position(500.0, 12_000.0, 0.0), 500.0);
+    }
 }

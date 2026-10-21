@@ -190,7 +190,7 @@ function formHtml(fields, values) {
       default:
         input = `<input type="${f.type || 'text'}" name="${f.key}" value="${esc(v)}" ${f.step ? `step="${f.step}"` : ''}>`;
     }
-    return `<div class="form-group"><label>${esc(f.label)}</label><div class="field">${input}${f.help ? `<div class="help">${f.help}</div>` : ''}</div></div>`;
+    return `<div class="form-group" data-field="${f.key}"><label>${esc(f.label)}</label><div class="field">${input}${f.help ? `<div class="help">${f.help}</div>` : ''}</div></div>`;
   }).join('');
 }
 
@@ -368,7 +368,7 @@ async function pageLibrary(id, params) {
         <th style="width:1%"><input type="checkbox" id="selAll"></th><th>File</th><th>Codec</th><th class="hide-sm">Resolution</th><th class="num">Size</th><th class="hide-sm num">Duration</th><th>Status</th><th></th></tr></thead><tbody>
         ${d.records.map((f) => `<tr>
           <td><input type="checkbox" data-sel="${esc(f.path)}" ${state.selected.has(f.path) ? 'checked' : ''}></td>
-          <td><div class="path">${esc(fname(f.path))}</div><div class="dim path">${esc(dirname(f.path).replace(lib.path, '') || '/')}</div></td>
+          <td class="file" title="${esc(f.path)}"><div class="path name">${esc(fname(f.path))}</div><div class="dim path">${esc(dirname(f.path).replace(lib.path, '') || '/')}</div></td>
           <td><span class="label" style="background:${codecColor(f.codec)}">${esc(f.codec || '?')}</span>${f.bitDepth > 8 ? `<span class="label inverse">${f.bitDepth}bit</span>` : ''}</td>
           <td class="hide-sm">${f.width ? `${f.width}×${f.height}` : ''}</td>
           <td class="num">${bytes(f.size)}</td>
@@ -427,7 +427,7 @@ async function pageQueue() {
       ${tasks.length ? `<table class="table"><thead><tr><th style="width:1%"></th><th>File</th><th class="hide-sm">Library</th><th>Codec</th><th class="num">Size</th><th>Progress</th><th class="num hide-sm">Speed</th><th class="num">ETA</th><th></th></tr></thead><tbody>
       ${tasks.map((t) => `<tr>
         <td>${t.status === 'queued' && !t.force ? `<input type="checkbox" data-sel="${t.id}" ${selected.has(t.id) ? 'checked' : ''}>` : ''}</td>
-        <td><div class="path">${esc(fname(t.path))}${t.force ? ' <span class="label warning">forced</span>' : ''}</div><div class="dim path">${esc(dirname(t.path))}</div></td>
+        <td class="file" title="${esc(t.path)}"><div class="path name">${esc(fname(t.path))}${t.force ? ' <span class="label warning">forced</span>' : ''}</div><div class="dim path">${esc(dirname(t.path))}</div></td>
         <td class="hide-sm">${esc(libName(t.libraryId))}</td>
         <td>${t.codecBefore ? `<span class="label" style="background:${codecColor(t.codecBefore)}">${esc(t.codecBefore)}</span>` : ''}</td>
         <td class="num">${bytes(t.sizeBefore)}</td>
@@ -499,7 +499,7 @@ async function pageHistory(params) {
       ${d.records.map((t) => {
         const saved = t.sizeAfter != null && t.status === 'completed' ? (1 - t.sizeAfter / t.sizeBefore) * 100 : null;
         return `<tr>
-          <td><div class="path">${esc(fname(t.outputPath || t.path))}</div><div class="dim path" title="${esc(t.error)}">${esc(t.error || dirname(t.path))}</div></td>
+          <td class="file" title="${esc(t.outputPath || t.path)}"><div class="path name">${esc(fname(t.outputPath || t.path))}</div><div class="dim path" title="${esc(t.error)}">${esc(t.error || dirname(t.path))}</div></td>
           <td>${statusLabel(t.status)}</td>
           <td>${t.codecBefore ? `<span class="label" style="background:${codecColor(t.codecBefore)}">${esc(t.codecBefore)}</span>` : ''}${t.codecAfter ? ` → <span class="label" style="background:${codecColor(t.codecAfter)}">${esc(t.codecAfter)}</span>` : ''}</td>
           <td class="num">${bytes(t.sizeBefore)}</td>
@@ -586,17 +586,25 @@ async function pageProfiles() {
 
 /* ---- Settings: General / Connect ---- */
 const GENERAL_FIELDS = [
+  { section: 'Workers' },
   { key: 'workers', label: 'Workers', type: 'number', help: 'Conversions running at the same time. On a Raspberry Pi keep 1.' },
   { key: 'scheduleEnabled', label: 'Use time window', type: 'checkbox', help: 'Outside the window running conversions are suspended (not restarted) and new ones are not started.' },
   { key: 'scheduleStart', label: 'Window start', type: 'time' },
   { key: 'scheduleEnd', label: 'Window end', type: 'time', help: 'Windows across midnight (e.g. 22:00 → 06:00) are supported.' },
-  { key: 'scanIntervalMinutes', label: 'Library scan interval', type: 'number', help: 'Minutes between automatic scans of every library. 0 = only manual scans and webhooks.' },
+  { section: 'Library Scanning' },
+  { key: 'scanIntervalMinutes', label: 'Scan interval', type: 'number', help: 'Minutes between automatic scans of every library. 0 = only manual scans and webhooks.' },
   { key: 'probeConcurrency', label: 'Parallel probes', type: 'number', help: 'ffprobe calls running at the same time during a scan.' },
+  { section: 'Files' },
   { key: 'cacheDir', label: 'Cache folder', help: 'ffmpeg writes here first; the original is replaced only after the output is verified.' },
-  { key: 'apiKey', label: 'API key', help: 'Send as <code>X-Api-Key</code> header or <code>?apikey=</code>. Empty = generate a new one.' },
-  { key: 'authUsername', label: 'UI username' },
-  { key: 'authPassword', label: 'UI password', type: 'password', help: 'Optional HTTP Basic authentication for the web UI. Empty = no login.' },
+  { section: 'Security' },
+  { key: 'authMethod', label: 'Authentication', type: 'select', options: [['none', 'None'], ['basic', 'Basic (Browser Popup)'], ['forms', 'Forms (Login Page)']], help: 'Method used to access the web UI. The API always needs the API key.' },
+  { key: 'authRequired', label: 'Authentication Required', type: 'select', options: [['enabled', 'Enabled'], ['disabledForLocalAddresses', 'Disabled for Local Addresses']], help: 'Local addresses: LAN, loopback and Docker networks. Do not disable it if a reverse proxy on the LAN publishes Converterr without setting X-Forwarded-For.' },
+  { key: 'authUsername', label: 'Username' },
+  { key: 'authPassword', label: 'Password', type: 'password' },
+  { key: 'authPasswordConfirm', label: 'Password Confirmation', type: 'password' },
+  { key: 'apiKey', label: 'API Key', help: 'Send as <code>X-Api-Key</code> header or <code>?apikey=</code>. Empty = generate a new one.' },
 ];
+const AUTH_FIELDS = ['authRequired', 'authUsername', 'authPassword', 'authPasswordConfirm'];
 
 const CONNECT_FIELDS = [
   { section: 'Sonarr / Radarr' },
@@ -614,11 +622,15 @@ const CONNECT_FIELDS = [
   { key: 'telegramOnFailed', label: 'On conversion failed', type: 'checkbox' },
 ];
 
-async function pageSettings(fields, extra = '') {
+async function pageSettings(fields, extra = '', validate = null) {
   const s = await GET('/settings');
   const save = async () => {
     const body = readForm($('#content'), fields, s);
+    const problem = validate && validate(body);
+    if (problem) { toast(problem, 'error'); return; }
+    delete body.authPasswordConfirm;
     const saved = await attempt(() => PUT('/settings', body), 'Settings saved');
+    BOOT.authMethod = saved.authMethod;
     if (saved.apiKey !== BOOT.apiKey) { BOOT.apiKey = saved.apiKey; }
     render();
   };
@@ -627,7 +639,20 @@ async function pageSettings(fields, extra = '') {
   return s;
 }
 
-async function pageGeneral() { await pageSettings(GENERAL_FIELDS); }
+async function pageGeneral() {
+  const s = await pageSettings(GENERAL_FIELDS, '', (b) => {
+    if (b.authMethod === 'none') return null;
+    if (!b.authUsername.trim() || !b.authPassword) return 'Username and password are required for authentication';
+    if (b.authPassword !== b.authPasswordConfirm) return 'Password and confirmation do not match';
+    return null;
+  });
+  const root = $('#content');
+  root.querySelector('[name="authPasswordConfirm"]').value = s.authPassword || '';
+  const method = root.querySelector('[name="authMethod"]');
+  const toggle = () => AUTH_FIELDS.forEach((k) => { root.querySelector(`[data-field="${k}"]`).hidden = method.value === 'none'; });
+  method.onchange = toggle;
+  toggle();
+}
 
 async function pageConnect() {
   const origin = location.origin;
@@ -734,7 +759,8 @@ async function refreshHeader() {
     $('#queueBadge').textContent = q.length || '';
     const running = q.find((t) => t.status === 'running');
     $('#headerStatus').innerHTML = (w.paused ? '<span class="label warning">paused</span>' : (!w.running ? '<span class="label info">scheduled</span>' : ''))
-      + (running ? ` <span title="${esc(running.path)}">${esc(fname(running.path)).slice(0, 40)} · ${running.progress.toFixed(1)}%</span>` : '');
+      + (running ? ` <span title="${esc(running.path)}">${esc(fname(running.path)).slice(0, 40)} · ${running.progress.toFixed(1)}%</span>` : '')
+      + (BOOT.authMethod === 'forms' ? ' <a href="/logout" title="Log out">Logout</a>' : '');
   } catch (_) { /* ignore */ }
 }
 

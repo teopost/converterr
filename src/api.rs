@@ -2,7 +2,9 @@
 
 use std::path::{Path as FsPath, PathBuf};
 
-use axum::extract::{Path, Query, Request, State};
+use std::net::{IpAddr, SocketAddr};
+
+use axum::extract::{ConnectInfo, Form, Path, Query, Request, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Response};
@@ -79,6 +81,8 @@ pub fn router(state: AppState) -> Router {
         .route("/app.js", get(|| async { asset("application/javascript", include_str!("web/app.js")) }))
         .route("/app.css", get(|| async { asset("text/css", include_str!("web/app.css")) }))
         .route("/logo.svg", get(|| async { asset("image/svg+xml", include_str!("web/logo.svg")) }))
+        .route("/login", get(login_page).post(login_submit))
+        .route("/logout", get(logout))
         .fallback(get(index))
         .layer(middleware::from_fn_with_state(state.clone(), ui_auth))
         .with_state(state)
@@ -90,13 +94,18 @@ fn asset(ct: &'static str, body: &'static str) -> Response {
 
 async fn index(State(st): State<AppState>) -> ApiResult<Html<String>> {
     let s = st.db.settings()?;
-    let boot = json!({ "apiKey": s.api_key, "version": VERSION }).to_string();
+    let boot = json!({ "apiKey": s.api_key, "version": VERSION, "authMethod": s.auth_method }).to_string();
     Ok(Html(include_str!("web/index.html").replace("/*BOOT*/{}", &boot)))
 }
 
 // ---------------------------------------------------------------------------
-// Auth: API key for /api (header X-Api-Key or ?apikey=), optional Basic auth for the UI.
+// Auth: API key for /api (header X-Api-Key or ?apikey=). The UI can require a
+// login like Sonarr: HTTP Basic (browser popup) or Forms (login page + session
+// cookie), optionally not for clients on local addresses.
 // ---------------------------------------------------------------------------
+
+const SESSION_COOKIE: &str = "converterr_session";
+const SESSION_MAX_AGE: i64 = 30 * 24 * 3600;
 
 fn query_param<'a>(req: &'a Request, name: &str) -> Option<&'a str> {
     req.uri().query()?.split('&').find_map(|kv| {
@@ -119,25 +128,190 @@ async fn api_auth(State(st): State<AppState>, req: Request, next: Next) -> Respo
     }
 }
 
+/// Loopback, private (RFC 1918 / ULA) and link-local addresses.
+fn is_local(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => is_local(IpAddr::V4(v4)),
+            None => v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00 || (v6.segments()[0] & 0xffc0) == 0xfe80,
+        },
+    }
+}
+
+/// The client address; X-Forwarded-For is trusted only from a local proxy.
+fn client_ip(headers: &HeaderMap, peer: Option<IpAddr>) -> Option<IpAddr> {
+    let peer = peer?;
+    if is_local(peer) {
+        let forwarded = headers
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split(',').next())
+            .and_then(|v| v.trim().parse().ok());
+        if forwarded.is_some() {
+            return forwarded;
+        }
+    }
+    Some(peer)
+}
+
+fn peer_ip(req: &Request) -> Option<IpAddr> {
+    req.extensions().get::<ConnectInfo<SocketAddr>>().map(|c| c.0.ip())
+}
+
+/// Does this client have to log in?
+fn login_required(s: &Settings, headers: &HeaderMap, peer: Option<IpAddr>) -> bool {
+    if s.auth_method == "none" || s.auth_password.is_empty() {
+        return false;
+    }
+    !(s.auth_required == "disabledForLocalAddresses" && client_ip(headers, peer).is_some_and(is_local))
+}
+
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+fn credentials_ok(s: &Settings, user: &str, password: &str) -> bool {
+    // Evaluate both so the time taken does not tell which one was wrong.
+    let u = ct_eq(user.as_bytes(), s.auth_username.as_bytes());
+    let p = ct_eq(password.as_bytes(), s.auth_password.as_bytes());
+    u & p
+}
+
 fn basic_ok(headers: &HeaderMap, s: &Settings) -> bool {
     use base64_lite::decode;
     let Some(v) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) else { return false };
     let Some(b64) = v.strip_prefix("Basic ") else { return false };
     let Some(raw) = decode(b64.trim()) else { return false };
-    raw == format!("{}:{}", s.auth_username, s.auth_password)
+    let Some((user, password)) = raw.split_once(':') else { return false };
+    credentials_ok(s, user, password)
+}
+
+fn session_token(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(';'))
+        .find_map(|c| c.trim().strip_prefix(SESSION_COOKIE)?.strip_prefix('='))
+}
+
+/// Only same-site paths, never "//host" or "/\host".
+fn safe_return_url(url: &str) -> &str {
+    if url.starts_with('/') && !url.starts_with("//") && !url.starts_with("/\\") { url } else { "/" }
+}
+
+fn url_encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+fn redirect(to: &str) -> Response {
+    (StatusCode::FOUND, [(header::LOCATION, to.to_string())]).into_response()
 }
 
 async fn ui_auth(State(st): State<AppState>, req: Request, next: Next) -> Response {
-    if req.uri().path().starts_with("/api/") {
-        return next.run(req).await; // API has its own key check
+    let path = req.uri().path();
+    if path.starts_with("/api/") || matches!(path, "/login" | "/logout" | "/logo.svg") {
+        return next.run(req).await; // the API has its own key check
     }
     let s = st.db.settings().unwrap_or_default();
-    if s.auth_password.is_empty() || basic_ok(req.headers(), &s) {
+    if !login_required(&s, req.headers(), peer_ip(&req)) {
+        return next.run(req).await;
+    }
+    if s.auth_method == "forms" {
+        if session_token(req.headers()).is_some_and(|t| st.db.session_valid(t, SESSION_MAX_AGE)) {
+            return next.run(req).await;
+        }
+        return redirect(&format!("/login?returnUrl={}", url_encode(path)));
+    }
+    if basic_ok(req.headers(), &s) {
         next.run(req).await
     } else {
         (StatusCode::UNAUTHORIZED, [(header::WWW_AUTHENTICATE, "Basic realm=\"Converterr\"")], "Unauthorized")
             .into_response()
     }
+}
+
+#[derive(Deserialize)]
+struct LoginQuery {
+    #[serde(rename = "returnUrl", default)]
+    return_url: String,
+    #[serde(rename = "loginFailed", default)]
+    login_failed: Option<String>,
+}
+
+async fn login_page(
+    State(st): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Query(q): Query<LoginQuery>,
+) -> Response {
+    let s = st.db.settings().unwrap_or_default();
+    if s.auth_method != "forms" || !login_required(&s, &headers, Some(peer.ip())) {
+        return redirect("/");
+    }
+    let error = if q.login_failed.is_some() { r#"<div class="error">Incorrect Username or Password</div>"# } else { "" };
+    let page = include_str!("web/login.html")
+        .replace("<!--ERROR-->", error)
+        .replace("<!--RETURN-->", &html_escape(safe_return_url(&q.return_url)));
+    ([(header::CACHE_CONTROL, "no-store")], Html(page)).into_response()
+}
+
+#[derive(Deserialize)]
+struct LoginForm {
+    #[serde(default)]
+    username: String,
+    #[serde(default)]
+    password: String,
+    #[serde(rename = "rememberMe", default)]
+    remember_me: Option<String>,
+    #[serde(rename = "returnUrl", default)]
+    return_url: String,
+}
+
+async fn login_submit(
+    State(st): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Form(f): Form<LoginForm>,
+) -> Response {
+    let s = st.db.settings().unwrap_or_default();
+    let ip = client_ip(&headers, Some(peer.ip())).map(|i| i.to_string()).unwrap_or_default();
+    let return_url = safe_return_url(&f.return_url).to_string();
+    if s.auth_method != "forms" || s.auth_password.is_empty() {
+        return redirect("/");
+    }
+    if !credentials_ok(&s, &f.username, &f.password) {
+        st.log("warn", &format!("Failed login for '{}' from {ip}", f.username));
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await; // slows down guessing
+        return redirect(&format!("/login?loginFailed=true&returnUrl={}", url_encode(&return_url)));
+    }
+    let token = match st.db.session_create(SESSION_MAX_AGE) {
+        Ok(t) => t,
+        Err(e) => return ApiError(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")).into_response(),
+    };
+    st.log("info", &format!("User '{}' logged in from {ip}", f.username));
+    // Without "Remember Me" the cookie lasts until the browser is closed.
+    let max_age = if f.remember_me.is_some() { format!("; Max-Age={SESSION_MAX_AGE}") } else { String::new() };
+    let cookie = format!("{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax{max_age}");
+    (StatusCode::FOUND, [(header::LOCATION, return_url), (header::SET_COOKIE, cookie)]).into_response()
+}
+
+async fn logout(State(st): State<AppState>, headers: HeaderMap) -> Response {
+    if let Some(t) = session_token(&headers) {
+        let _ = st.db.session_delete(t);
+    }
+    let cookie = format!("{SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
+    (StatusCode::FOUND, [(header::LOCATION, "/".to_string()), (header::SET_COOKIE, cookie)]).into_response()
 }
 
 mod base64_lite {
@@ -189,6 +363,20 @@ async fn put_settings(State(st): State<AppState>, Json(mut s): Json<Settings>) -
     s.workers = s.workers.clamp(0, worker::MAX_WORKERS as i64);
     if s.api_key.trim().is_empty() {
         s.api_key = crate::db::random_key();
+    }
+    if !matches!(s.auth_method.as_str(), "none" | "basic" | "forms") {
+        return Err(ApiError(StatusCode::BAD_REQUEST, format!("unknown authentication method '{}'", s.auth_method)));
+    }
+    if !matches!(s.auth_required.as_str(), "enabled" | "disabledForLocalAddresses") {
+        return Err(ApiError(StatusCode::BAD_REQUEST, format!("unknown authentication required '{}'", s.auth_required)));
+    }
+    s.auth_username = s.auth_username.trim().to_string();
+    if s.auth_method != "none" && (s.auth_username.is_empty() || s.auth_password.is_empty()) {
+        return Err(ApiError(StatusCode::BAD_REQUEST, "username and password are required for authentication".into()));
+    }
+    let old = st.db.settings()?;
+    if (&old.auth_method, &old.auth_username, &old.auth_password) != (&s.auth_method, &s.auth_username, &s.auth_password) {
+        st.db.sessions_clear()?; // credentials changed: log everybody out
     }
     st.db.save_settings(&s)?;
     st.wake.notify_waiters();
@@ -615,4 +803,54 @@ async fn webhook(State(st): State<AppState>, Json(payload): Json<Value>) -> ApiR
     }
     st.log("info", &format!("Webhook '{event}' received, {queued} file(s) queued"));
     Ok(Json(json!({ "queued": queued })))
+}
+
+#[cfg(test)]
+mod auth_tests {
+    use super::*;
+
+    #[test]
+    fn local_addresses() {
+        for ip in ["127.0.0.1", "192.168.1.181", "10.1.2.3", "172.18.0.5", "169.254.1.1", "::1", "fd00::1", "fe80::1", "::ffff:192.168.1.5"] {
+            assert!(is_local(ip.parse().unwrap()), "{ip}");
+        }
+        for ip in ["93.50.248.18", "8.8.8.8", "2001:4860::8888", "::ffff:8.8.8.8"] {
+            assert!(!is_local(ip.parse().unwrap()), "{ip}");
+        }
+    }
+
+    #[test]
+    fn forwarded_for_only_from_local_proxy() {
+        let mut h = HeaderMap::new();
+        h.insert("x-forwarded-for", "8.8.8.8, 10.0.0.1".parse().unwrap());
+        assert_eq!(client_ip(&h, Some("172.18.0.1".parse().unwrap())), Some("8.8.8.8".parse().unwrap()));
+        h.insert("x-forwarded-for", "192.168.1.5".parse().unwrap());
+        assert_eq!(client_ip(&h, Some("93.50.248.18".parse().unwrap())), Some("93.50.248.18".parse().unwrap()));
+    }
+
+    #[test]
+    fn login_rules() {
+        let mut s = Settings { auth_method: "forms".into(), auth_username: "admin".into(), auth_password: "pw".into(), ..Settings::default() };
+        let h = HeaderMap::new();
+        let lan = Some("192.168.1.181".parse().unwrap());
+        assert!(login_required(&s, &h, lan));
+        s.auth_required = "disabledForLocalAddresses".into();
+        assert!(!login_required(&s, &h, lan));
+        assert!(login_required(&s, &h, Some("8.8.8.8".parse().unwrap())));
+        s.auth_method = "none".into();
+        assert!(!login_required(&s, &h, Some("8.8.8.8".parse().unwrap())));
+        assert!(credentials_ok(&Settings { auth_username: "a".into(), auth_password: "b".into(), ..Settings::default() }, "a", "b"));
+        assert!(!credentials_ok(&Settings { auth_username: "a".into(), auth_password: "b".into(), ..Settings::default() }, "a", "bb"));
+    }
+
+    #[test]
+    fn cookies_and_redirects() {
+        let mut h = HeaderMap::new();
+        h.insert(header::COOKIE, "foo=1; converterr_session=abc123; bar=2".parse().unwrap());
+        assert_eq!(session_token(&h), Some("abc123"));
+        assert_eq!(safe_return_url("/#/settings/general"), "/#/settings/general");
+        assert_eq!(safe_return_url("//evil.com"), "/");
+        assert_eq!(safe_return_url("https://evil.com"), "/");
+        assert_eq!(safe_return_url("/\\evil.com"), "/");
+    }
 }

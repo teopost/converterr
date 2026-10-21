@@ -104,7 +104,9 @@ set the library's **Sonarr/Radarr path** to `/tv`.
 | `RUST_LOG`        | `info`    | Log level                          |
 
 All other settings live in the web UI: workers, time window, scan interval,
-cache folder, API key, optional UI password, and Sonarr/Radarr.
+cache folder, API key, Sonarr/Radarr and the UI login (Settings → General →
+Security: none, Basic or Forms with a login page like Sonarr, optionally not
+required for local addresses).
 
 ## Building without Docker
 

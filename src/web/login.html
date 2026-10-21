@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login - Converterr</title>
+  <link rel="icon" href="/logo.svg">
+  <style>
+    :root { --accent: #a46bff; --accent-dark: #7d48d9; --bg: #202020; --panel: #2a2a2a; --text: #ccc; --text-dim: #8c8c8c; --danger: #f05050;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font: 14px/1.5 var(--font); }
+    .center { display: flex; min-height: 100vh; align-items: center; justify-content: center; padding: 16px; }
+    .panel { width: 100%; max-width: 350px; border-radius: 4px; background: var(--panel); box-shadow: 0 0 15px rgba(0,0,0,.4); overflow: hidden; }
+    .panel-header { display: flex; justify-content: center; align-items: center; gap: 10px; padding: 20px; background: #262626;
+      color: #fff; font-size: 22px; font-weight: 300; }
+    .panel-header img { width: 40px; height: 40px; }
+    form { padding: 20px; }
+    .sign-in { margin-bottom: 14px; text-align: center; }
+    input[type=text], input[type=password] { width: 100%; margin-bottom: 10px; padding: 8px 12px; border: 1px solid #555; border-radius: 4px;
+      background: #333; color: var(--text); font: 14px var(--font); outline: none; }
+    input:focus { border-color: var(--accent); }
+    label.remember { display: flex; align-items: center; gap: 8px; margin: 4px 0 16px; color: var(--text-dim); cursor: pointer; }
+    input[type=checkbox] { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+    button { width: 100%; padding: 8px; border: 1px solid var(--accent-dark); border-radius: 4px; background: var(--accent); color: #fff;
+      font: 14px var(--font); cursor: pointer; }
+    button:hover { background: var(--accent-dark); }
+    .error { margin-bottom: 12px; padding: 8px 12px; border-left: 3px solid var(--danger); background: rgba(240,80,80,.12); color: #f7a1a1; }
+  </style>
+</head>
+<body>
+  <div class="center">
+    <div class="panel">
+      <div class="panel-header"><img src="/logo.svg" alt="">Converterr</div>
+      <form method="post" action="/login">
+        <div class="sign-in">Sign in to continue to Converterr</div>
+        <!--ERROR-->
+        <input type="text" name="username" placeholder="Username" autocomplete="username" autofocus required>
+        <input type="password" name="password" placeholder="Password" autocomplete="current-password" required>
+        <input type="hidden" name="returnUrl" value="<!--RETURN-->">
+        <label class="remember"><input type="checkbox" name="rememberMe" value="on" checked>Remember Me</label>
+        <button type="submit">Login</button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>

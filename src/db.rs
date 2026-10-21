@@ -37,7 +37,10 @@ pub struct Settings {
     pub sonarr_api_key: String,
     pub radarr_url: String,
     pub radarr_api_key: String,
-    /// Optional HTTP Basic auth for the web UI (empty password = disabled).
+    /// Web UI login: none | basic (browser popup) | forms (login page).
+    pub auth_method: String,
+    /// enabled | disabledForLocalAddresses (no login from LAN/loopback).
+    pub auth_required: String,
     pub auth_username: String,
     pub auth_password: String,
     /// Telegram notifications (same bot/chat as Sonarr/Radarr can be reused).
@@ -66,6 +69,9 @@ impl Default for Settings {
             sonarr_api_key: String::new(),
             radarr_url: String::new(),
             radarr_api_key: String::new(),
+            // Empty = settings saved before auth_method existed, see `Db::seed`.
+            auth_method: String::new(),
+            auth_required: "enabled".into(),
             auth_username: "admin".into(),
             auth_password: String::new(),
             telegram_bot_token: String::new(),
@@ -290,6 +296,10 @@ CREATE TABLE IF NOT EXISTS files (
     checked_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS files_library ON files(library_id);
+CREATE TABLE IF NOT EXISTS sessions (
+    token      TEXT PRIMARY KEY,
+    created_at INTEGER NOT NULL
+);
 "#;
 
 const TASK_COLS: &str = "id, library_id, path, status, priority, progress, speed, eta_seconds, \
@@ -386,6 +396,11 @@ impl Db {
             s.api_key = random_key();
             self.save_settings(&s)?;
         }
+        if s.auth_method.is_empty() {
+            // Older versions: a password meant Basic auth, no password no login.
+            s.auth_method = if s.auth_password.is_empty() { "none" } else { "basic" }.into();
+            self.save_settings(&s)?;
+        }
         if self.profiles()?.is_empty() {
             self.save_profile(&Profile {
                 name: "TV compatible (HEVC 720p)".into(),
@@ -422,6 +437,37 @@ impl Db {
             "INSERT INTO config (id, json) VALUES (1, ?1) ON CONFLICT(id) DO UPDATE SET json=excluded.json",
             params![serde_json::to_string(s)?],
         )?;
+        Ok(())
+    }
+
+    // -- login sessions (forms auth) ---------------------------------------
+
+    /// New session token; also drops sessions older than `max_age_secs`.
+    pub fn session_create(&self, max_age_secs: i64) -> Result<String> {
+        let token = format!("{}{}", random_key(), random_key());
+        let now = chrono::Utc::now().timestamp();
+        let conn = self.conn();
+        conn.execute("DELETE FROM sessions WHERE created_at<?1", params![now - max_age_secs])?;
+        conn.execute("INSERT INTO sessions (token, created_at) VALUES (?1, ?2)", params![token, now])?;
+        Ok(token)
+    }
+
+    /// Valid if it exists and is younger than `max_age_secs`.
+    pub fn session_valid(&self, token: &str, max_age_secs: i64) -> bool {
+        let oldest = chrono::Utc::now().timestamp() - max_age_secs;
+        self.conn()
+            .query_row("SELECT 1 FROM sessions WHERE token=?1 AND created_at>=?2", params![token, oldest], |_| Ok(()))
+            .is_ok()
+    }
+
+    pub fn session_delete(&self, token: &str) -> Result<()> {
+        self.conn().execute("DELETE FROM sessions WHERE token=?1", params![token])?;
+        Ok(())
+    }
+
+    /// Logs everybody out (credentials or auth method changed).
+    pub fn sessions_clear(&self) -> Result<()> {
+        self.conn().execute("DELETE FROM sessions", [])?;
         Ok(())
     }
 
